@@ -25,6 +25,11 @@ function isFeatureRoot(type: FeatureWithAnySubFeatures["type"], parentFeatures: 
             return true;
         }
 
+        // Check if any parent is a composite - if so, this composite is nested and should not be a root
+        if (parentFeatures.some((parent) => parent.type === "composite")) {
+            return false;
+        }
+
         if (parentFeatures.length === 1) {
             // When parent is e.g. climate
             const parentType = parentFeatures[0].type;
@@ -62,17 +67,30 @@ export default function FeatureSubFeatures({
 
     const onFeatureChange = useCallback(
         (value: Record<string, unknown>): void => {
-            setState((prev) => ({ ...prev, ...value }));
+            setState((prev) => {
+                const newState = { ...prev, ...value };
 
-            if (!isRoot) {
-                if (type === "composite") {
-                    onChange(property ? { [property]: { ...state, ...value } } : value);
-                } else {
-                    onChange(value);
+                if (!isRoot) {
+                    if (type === "composite") {
+                        // For nested composites, deviceState is already scoped to this property
+                        // Merge with existing values from both deviceState and previous local state to preserve all values
+                        const existingFromDevice =
+                            deviceState && typeof deviceState === "object" && !Array.isArray(deviceState)
+                                ? (deviceState as Record<string, unknown>)
+                                : {};
+                        const existingFromState = prev;
+                        const allExisting = { ...existingFromDevice, ...existingFromState };
+                        const mergedState = { ...allExisting, ...value };
+                        onChange(property ? { [property]: mergedState } : mergedState);
+                    } else {
+                        onChange(value);
+                    }
                 }
-            }
+
+                return newState;
+            });
         },
-        [state, type, property, isRoot, onChange],
+        [type, property, isRoot, onChange, deviceState],
     );
 
     const onRootApply = useCallback((): void => {
@@ -94,13 +112,13 @@ export default function FeatureSubFeatures({
 
     return (
         <>
-            {features.map((feature) => (
+            {features.map((subFeature) => (
                 <Feature
                     // @ts-expect-error typing failure
-                    key={getFeatureKey(feature)}
+                    key={getFeatureKey(subFeature)}
                     // @ts-expect-error typing failure
-                    feature={feature}
-                    parentFeatures={parentFeatures ?? []}
+                    feature={subFeature}
+                    parentFeatures={[...(parentFeatures ?? []), feature]}
                     device={device}
                     deviceState={combinedState}
                     onChange={onFeatureChange}
@@ -108,7 +126,7 @@ export default function FeatureSubFeatures({
                     featureWrapperClass={featureWrapperClass}
                     minimal={minimal}
                     endpointSpecific={endpointSpecific}
-                    steps={steps?.[feature.name]}
+                    steps={steps?.[subFeature.name]}
                 />
             ))}
             {isRoot && (
